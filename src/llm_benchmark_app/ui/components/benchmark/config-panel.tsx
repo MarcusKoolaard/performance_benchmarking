@@ -45,6 +45,7 @@ interface BenchmarkConfig {
   requestsPerWorker: number;
   timeout: number;
   maxRetries: number;
+  cacheHitRate: number;
 }
 
 const DEFAULT_CONFIG: BenchmarkConfig = {
@@ -56,6 +57,7 @@ const DEFAULT_CONFIG: BenchmarkConfig = {
   requestsPerWorker: 5,
   timeout: 300,
   maxRetries: 3,
+  cacheHitRate: 0,
 };
 
 const PRESETS: Record<string, Partial<BenchmarkConfig>> = {
@@ -146,6 +148,7 @@ export function ConfigPanel({
       requests_per_worker: config.requestsPerWorker,
       timeout: config.timeout,
       max_retries: config.maxRetries,
+      cache_hit_rate: config.cacheHitRate,
     };
 
     setLogs([]);
@@ -351,7 +354,29 @@ export function ConfigPanel({
                 className="h-8"
               />
             </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Cache Hit %</Label>
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                value={config.cacheHitRate}
+                onChange={(e) =>
+                  updateConfig(
+                    "cacheHitRate",
+                    Math.min(100, Math.max(0, parseInt(e.target.value) || 0)),
+                  )
+                }
+                className="h-8"
+              />
+            </div>
           </div>
+
+          <p className="text-[11px] text-muted-foreground -mt-2">
+            Cache Hit %: share of requests sent with an identical, cacheable
+            prompt; the rest get a unique prefix that defeats prompt caching.
+            0 = cold prefill on every request.
+          </p>
 
           {/* Estimate */}
           <div className="text-xs text-muted-foreground bg-muted/50 rounded-md p-2.5">
