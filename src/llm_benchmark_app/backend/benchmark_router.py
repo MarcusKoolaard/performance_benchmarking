@@ -317,6 +317,7 @@ async def start_benchmark(
         requests_per_worker=body.requests_per_worker,
         timeout=body.timeout,
         max_retries=body.max_retries,
+        cache_hit_rate=body.cache_hit_rate,
     )
 
     run = create_run(config)

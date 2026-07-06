@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import math
+import random
 import statistics
 import time
 import uuid
@@ -47,6 +48,7 @@ class BenchmarkConfig:
     requests_per_worker: int = 5
     timeout: int = 300
     max_retries: int = 3
+    cache_hit_rate: float = 0.0
 
 
 @dataclass
@@ -99,9 +101,20 @@ def remove_active_run(run_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _build_request_payload(in_tokens: int, out_tokens: int) -> dict:
+def _build_request_payload(
+    in_tokens: int, out_tokens: int, cacheable: bool = False
+) -> dict:
     overhead_tokens = 50
     user_content_tokens = max(1, in_tokens - overhead_tokens)
+    if cacheable:
+        # Identical payload — after the first request, providers/engines with
+        # prefix caching serve this without a full prefill.
+        prefix = ""
+    else:
+        # A unique nonce at the START of the user content breaks exact-prefix
+        # matching (a trailing nonce would not), forcing a full prefill.
+        prefix = uuid.uuid4().hex + " "
+        user_content_tokens = max(1, user_content_tokens - 20)
     repeat_count = max(1, user_content_tokens // 2)
     return {
         "messages": [
@@ -112,10 +125,9 @@ def _build_request_payload(in_tokens: int, out_tokens: int) -> dict:
                     "Write a detailed explanation that uses precisely this number of tokens."
                 ),
             },
-            {"role": "user", "content": "Hello! " * repeat_count},
+            {"role": "user", "content": prefix + "Hello! " * repeat_count},
         ],
         "max_tokens": out_tokens,
-        "temperature": 0.0,
     }
 
 
@@ -131,6 +143,7 @@ async def _worker(
     out_tokens: int,
     qps: float,
     max_retries: int,
+    cache_hit_rate: float,
     cancel_event: asyncio.Event,
     latencies: list[tuple[int, int, float]],
     failed_counter: list[int],
@@ -138,9 +151,6 @@ async def _worker(
     on_request_done: Any | None = None,
 ) -> None:
     """Single async worker that sends requests to an endpoint."""
-    payload = _build_request_payload(in_tokens, out_tokens)
-    json_data = json.dumps(payload)
-
     await asyncio.sleep(0.1 * worker_index)
 
     for i in range(num_requests):
@@ -149,6 +159,11 @@ async def _worker(
 
         if i > 0:
             await asyncio.sleep(1.0 / qps)
+
+        cacheable = random.random() * 100.0 < cache_hit_rate
+        json_data = json.dumps(
+            _build_request_payload(in_tokens, out_tokens, cacheable=cacheable)
+        )
 
         request_start = time.time()
         retry_count = 0
@@ -226,6 +241,7 @@ async def _run_single_endpoint(
     qps: float,
     timeout: int,
     max_retries: int,
+    cache_hit_rate: float,
     cancel_event: asyncio.Event,
     emit: Any,
     on_request_done: Any | None = None,
@@ -260,6 +276,7 @@ async def _run_single_endpoint(
                     out_tokens=out_tokens,
                     qps=qps,
                     max_retries=max_retries,
+                    cache_hit_rate=cache_hit_rate,
                     cancel_event=cancel_event,
                     latencies=latencies,
                     failed_counter=failed_counter,
@@ -400,6 +417,7 @@ async def run_benchmark_suite(run: BenchmarkRun, pool: Any | None = None) -> Non
                                     qps=qps,
                                     timeout=config.timeout,
                                     max_retries=config.max_retries,
+                                    cache_hit_rate=config.cache_hit_rate,
                                     cancel_event=run.cancel_event,
                                     emit=emit,
                                     on_request_done=on_request_done,
@@ -428,6 +446,7 @@ async def run_benchmark_suite(run: BenchmarkRun, pool: Any | None = None) -> Non
                 "output_tokens": config.output_tokens,
                 "input_tokens": config.input_tokens,
                 "requests_per_worker": config.requests_per_worker,
+                "cache_hit_rate": config.cache_hit_rate,
             },
         }
         run.status = RunStatus.COMPLETED

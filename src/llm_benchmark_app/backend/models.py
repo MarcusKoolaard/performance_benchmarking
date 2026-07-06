@@ -42,6 +42,7 @@ class BenchmarkConfigIn(BaseModel):
     requests_per_worker: int = Field(default=5, ge=1, le=10)
     timeout: int = Field(default=300, ge=30, le=3600)
     max_retries: int = Field(default=3, ge=0, le=10)
+    cache_hit_rate: float = Field(default=0.0, ge=0, le=100)
 
 
 class BenchmarkRunOut(BaseModel):
