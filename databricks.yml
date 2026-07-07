@@ -22,6 +22,7 @@ resources:
       source_code_path: ./.build
       user_api_scopes:
         - serving.serving-endpoints
+        - ai-gateway
       compute_size: LARGE
       resources:
         - name: benchmark-db
