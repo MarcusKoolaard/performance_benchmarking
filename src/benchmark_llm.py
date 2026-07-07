@@ -25,7 +25,15 @@ class LLMBenchmark:
                  request_timeout: int = 300, max_retries: int = 3):
         self.endpoint_name = endpoint_name
         self.api_root = api_root.rstrip('/')
-        self.endpoint_url = f'{self.api_root}/serving-endpoints/{endpoint_name}/invocations'
+        if endpoint_name.startswith('databricks-'):
+            # Databricks-provided model services go through the standalone
+            # Unity AI Gateway (usage lands in system.ai_gateway.usage); the
+            # model is addressed via the "model" field in the request body.
+            self.endpoint_url = f'{self.api_root}/ai-gateway/mlflow/v1/chat/completions'
+            self.payload_model = endpoint_name
+        else:
+            self.endpoint_url = f'{self.api_root}/serving-endpoints/{endpoint_name}/invocations'
+            self.payload_model = None
         self.headers = {
             'Authorization': f'Bearer {api_token}',
             'Content-Type': 'application/json'
@@ -41,7 +49,7 @@ class LLMBenchmark:
         user_content_tokens = max(1, in_tokens - overhead_tokens)
         repeat_count = max(1, user_content_tokens // 2)
 
-        return {
+        payload = {
             "messages": [
                 {
                     "role": "system",
@@ -55,6 +63,9 @@ class LLMBenchmark:
             "max_tokens": out_tokens,
             "temperature": 0.0
         }
+        if self.payload_model is not None:
+            payload["model"] = self.payload_model
+        return payload
 
     async def worker(self, index: int, num_requests: int, in_tokens: int,
                     out_tokens: int, qps: float):

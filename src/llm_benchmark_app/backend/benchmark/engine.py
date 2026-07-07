@@ -101,8 +101,18 @@ def remove_active_run(run_id: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def _uses_ai_gateway(endpoint_name: str) -> bool:
+    """Databricks-provided model services (pay-per-token, ``databricks-*``) are
+    invoked through the standalone Unity AI Gateway so usage lands in
+    ``system.ai_gateway.usage`` and the built-in usage dashboard. Custom and
+    provisioned-throughput endpoints are not addressable through the gateway,
+    so they keep the classic serving-endpoint path.
+    """
+    return endpoint_name.startswith("databricks-")
+
+
 def _build_request_payload(
-    in_tokens: int, out_tokens: int, cacheable: bool = False
+    in_tokens: int, out_tokens: int, cacheable: bool = False, model: str | None = None
 ) -> dict:
     overhead_tokens = 50
     user_content_tokens = max(1, in_tokens - overhead_tokens)
@@ -116,7 +126,7 @@ def _build_request_payload(
         prefix = uuid.uuid4().hex + " "
         user_content_tokens = max(1, user_content_tokens - 20)
     repeat_count = max(1, user_content_tokens // 2)
-    return {
+    payload: dict = {
         "messages": [
             {
                 "role": "system",
@@ -129,6 +139,9 @@ def _build_request_payload(
         ],
         "max_tokens": out_tokens,
     }
+    if model is not None:
+        payload["model"] = model
+    return payload
 
 
 async def _worker(
@@ -136,6 +149,7 @@ async def _worker(
     endpoint_name: str,
     display_name: str,
     endpoint_url: str,
+    payload_model: str | None,
     session: aiohttp.ClientSession,
     worker_index: int,
     num_requests: int,
@@ -162,7 +176,9 @@ async def _worker(
 
         cacheable = random.random() * 100.0 < cache_hit_rate
         json_data = json.dumps(
-            _build_request_payload(in_tokens, out_tokens, cacheable=cacheable)
+            _build_request_payload(
+                in_tokens, out_tokens, cacheable=cacheable, model=payload_model
+            )
         )
 
         request_start = time.time()
@@ -250,11 +266,24 @@ async def _run_single_endpoint(
     host = workspace_host.rstrip("/")
     if host.endswith("/api/2.0"):
         host = host[: -len("/api/2.0")]
-    endpoint_url = f"{host}/serving-endpoints/{endpoint_name}/invocations"
+    if _uses_ai_gateway(endpoint_name):
+        # Unified (MLflow) chat-completions surface; the model service is
+        # addressed via the "model" field in the request body.
+        endpoint_url = f"{host}/ai-gateway/mlflow/v1/chat/completions"
+        payload_model = endpoint_name
+    else:
+        endpoint_url = f"{host}/serving-endpoints/{endpoint_name}/invocations"
+        payload_model = None
     headers = {
         "Authorization": f"Bearer {api_token}",
         "Content-Type": "application/json",
     }
+    if payload_model is not None:
+        # Logged to the request_tags column of system.ai_gateway.usage for
+        # attribution in the built-in usage dashboard.
+        headers["Databricks-Ai-Gateway-Request-Tags"] = json.dumps(
+            {"app": "llm-benchmark-app"}
+        )
 
     latencies: list[tuple[int, int, float]] = []
     failed_counter = [0]
@@ -269,6 +298,7 @@ async def _run_single_endpoint(
                     endpoint_name=endpoint_name,
                     display_name=display_name,
                     endpoint_url=endpoint_url,
+                    payload_model=payload_model,
                     session=session,
                     worker_index=idx,
                     num_requests=requests_per_worker,
