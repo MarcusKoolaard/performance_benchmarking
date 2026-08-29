@@ -268,9 +268,11 @@ async def _run_single_endpoint(
         host = host[: -len("/api/2.0")]
     if _uses_ai_gateway(endpoint_name):
         # Unified (MLflow) chat-completions surface; the model service is
-        # addressed via the "model" field in the request body.
+        # addressed via the "model" field in the request body. The gateway
+        # resolves v3 Unity Catalog model services, so it needs the 3-part
+        # name -- the serving-endpoint name gives HTTP 501 NOT_IMPLEMENTED.
         endpoint_url = f"{host}/ai-gateway/mlflow/v1/chat/completions"
-        payload_model = endpoint_name
+        payload_model = f"system.ai.{endpoint_name.removeprefix('databricks-')}"
     else:
         endpoint_url = f"{host}/serving-endpoints/{endpoint_name}/invocations"
         payload_model = None
