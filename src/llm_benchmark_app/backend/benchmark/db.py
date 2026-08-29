@@ -70,6 +70,9 @@ def create_pool(workspace_client: Any) -> ConnectionPool[Any]:
 
     import uuid as _uuid
 
+    # Lakebase Autoscaling injects LAKEBASE_ENDPOINT (endpoint resource path);
+    # the legacy Provisioned tier injects INSTANCE_NAME instead.
+    endpoint = os.environ.get("LAKEBASE_ENDPOINT", "")
     instance_name = os.environ.get("INSTANCE_NAME", "")
     username = os.environ.get("PGUSER", "")
     host = os.environ.get("PGHOST", "")
@@ -80,10 +83,15 @@ def create_pool(workspace_client: Any) -> ConnectionPool[Any]:
     class OAuthConnection(psycopg.Connection):
         @classmethod
         def connect(cls, conninfo="", **kwargs):
-            credential = workspace_client.database.generate_database_credential(
-                request_id=str(_uuid.uuid4()),
-                instance_names=[instance_name],
-            )
+            if endpoint:
+                credential = workspace_client.postgres.generate_database_credential(
+                    endpoint
+                )
+            else:
+                credential = workspace_client.database.generate_database_credential(
+                    request_id=str(_uuid.uuid4()),
+                    instance_names=[instance_name],
+                )
             kwargs["password"] = credential.token
             return super().connect(conninfo, **kwargs)
 
