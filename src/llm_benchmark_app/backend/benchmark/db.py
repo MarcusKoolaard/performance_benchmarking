@@ -105,6 +105,11 @@ def create_pool(workspace_client: Any) -> ConnectionPool[Any]:
         connection_class=OAuthConnection,
         min_size=1,
         max_size=5,
+        # Lakebase Autoscaling suspends the compute when idle, which kills
+        # pooled connections (psycopg AdminShutdown on next use). Validate on
+        # checkout, and retire idle connections before the suspend timeout.
+        check=ConnectionPool.check_connection,
+        max_idle=240,
         open=True,
     )
     return pool
